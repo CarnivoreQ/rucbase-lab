@@ -198,7 +198,46 @@ void SmManager::drop_table(const std::string& tab_name, Context* context) {
  * @param {Context*} context
  */
 void SmManager::create_index(const std::string& tab_name, const std::vector<std::string>& col_names, Context* context) {
-    
+    //检查索引是否已经存在
+    TabMeta& tab = db_.get_table(tab_name);
+    if (ix_manager_->exists(tab_name, col_names)) {
+        throw IndexExistsError(tab_name, col_names);
+    }
+    //获取要索引的列的元数据
+    std::vector<ColMeta> index_cols;
+    for (auto& col_name : col_names) {
+        index_cols.push_back(*tab.get_col(col_name));
+    }
+    //调用IxManager的方法建立索引并打开索引文件
+    ix_manager_->create_index(tab_name, index_cols);
+    std::unique_ptr<IxIndexHandle> ih = ix_manager_->open_index(tab_name, index_cols);
+    //get RmFileHandle
+    int col_tot_len = 0;
+    for (ColMeta& col : index_cols) {
+        col_tot_len += col.len;
+    }
+    RmFileHandle* file_handle = fhs_.at(tab_name).get();
+    //将所有record逐一索引到ih当中
+    char key[col_tot_len];
+    for (RmScan scan(file_handle); !scan.is_end(); scan.next()) {
+        std::unique_ptr<RmRecord> record = file_handle->get_record(scan.rid(), context);
+        int offset = 0;
+        // record data里以各个属性的offset进行分隔，属性的长度为col len，record里面每个属性的数据作为key插入索引里
+        for (size_t i = 0; i < index_cols.size(); ++i) {
+            memcpy(key + offset, record.get()->data + index_cols[i].offset, index_cols[i].len);
+            offset += index_cols[i].len;
+        }
+        ih->insert_entry(key, scan.rid(), context->txn_);
+    }
+    //储存index handle
+    tab.indexes.push_back(IndexMeta{tab_name, col_tot_len, (int)index_cols.size(), index_cols});
+    ihs_.emplace(ix_manager_->get_index_name(tab_name, col_names), std::move(ih));
+    //ihs_[index_name] = std::move(ih);
+    std::string index_name = ix_manager_->get_index_name(tab_name, index_cols);
+    //关闭索引使用col_index = true等方式将该行索引标记为已建立，前面没弄所以就直接关闭吧
+    ix_manager_->close_index(ihs_.at(index_name).get());
+
+    flush_meta();
 }
 
 /**
@@ -217,6 +256,6 @@ void SmManager::drop_index(const std::string& tab_name, const std::vector<std::s
  * @param {vector<ColMeta>&} 索引包含的字段元数据
  * @param {Context*} context
  */
-void SmManager::drop_index(const std::string& tab_name, const std::vector<ColMeta>& cols, Context* context) {
+void SmManager::drop_index(const std::string& tab_name, const std::vector<ColMeta>& index_cols, Context* context) {
     
 }
