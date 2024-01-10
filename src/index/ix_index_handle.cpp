@@ -134,12 +134,11 @@ void IxNodeHandle::insert_pairs(int pos, const char *key, const Rid *rid, int n)
 
     //必要解释一下memmove和memcpy区别，memcpy() 进行更快速的内存复制操作，如果内存区域可能存在重叠，应该使用 memmove() 来确保操作的安全性
     //使用memmove将pos位置的key和rid内存安全移动到pos+n*key的位置，再使用memcpy快速地将key值插入到pos位置
-    //这个地方按理来说都用memmove应该更安全，但是memcpy()性能上大大强于memmove()
     //2通过key获取n个连续key并插入
-	memcpy(begin_key + n*k_len, begin_key, num*k_len);
+	memmove(begin_key + n*k_len, begin_key, num*k_len);
 	memcpy(begin_key, key, n*k_len);
     //3通过rid获取n个连续rid并插入
-	memcpy(begin_rid +n, begin_rid, num*r_len);
+	memmove(begin_rid +n, begin_rid, num*r_len);
 	memcpy(begin_rid, rid, n*r_len);
 
 	set_size(get_size()+ n); //4更新当前节点的键值对数量
@@ -195,9 +194,9 @@ void IxNodeHandle::erase_pair(int pos) {
 	char* key = get_key(pos);
 	Rid* rid = get_rid(pos);
     
-    //1.2、2.删除pos位置的键值对，使用memcpy直接覆盖
-	memcpy(key, key+k_len, num*k_len); 
-	memcpy(rid, rid+1, num*r_len);
+    //1.2、2.删除pos位置的键值对，使用memmove直接覆盖
+	memmove(key, key+k_len, num*k_len); 
+	memmove(rid, rid+1, num*r_len);
     //3.更新键值对数量
 	page_hdr->num_key -= 1; 
 
