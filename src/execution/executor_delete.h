@@ -38,6 +38,7 @@ class DeleteExecutor : public AbstractExecutor {
         conds_ = conds;
         rids_ = rids;
         context_ = context;
+        cols_ = tab_.cols;
     }
     // 用于删除操作
     std::unique_ptr<RmRecord> Next() override {
