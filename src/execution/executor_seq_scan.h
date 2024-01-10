@@ -26,7 +26,7 @@ class SeqScanExecutor : public AbstractExecutor {
     std::vector<Condition> fed_conds_;  // 同conds_，两个字段相同
 
     Rid rid_;
-    std::unique_ptr<RecScan> scan_;     // table_iterator
+    std::unique_ptr<RecScan> scan_;  // table_iterator
 
     SmManager *sm_manager_;
 
@@ -39,36 +39,92 @@ class SeqScanExecutor : public AbstractExecutor {
         fh_ = sm_manager_->fhs_.at(tab_name_).get();
         cols_ = tab.cols;
         len_ = cols_.back().offset + cols_.back().len;
-
         context_ = context;
-
         fed_conds_ = conds_;
     }
 
-    /**
-     * @brief 构建表迭代器scan_,并开始迭代扫描,直到扫描到第一个满足谓词条件的元组停止,并赋值给rid_
-     *
-     */
+    //通过调用RmScan中的相关函数来辅助实现,实际上在Lab1中已经实现
+
     void beginTuple() override {
-        
+        scan_ = std::make_unique<RmScan>(fh_);  // 初始化迭代器
+        rid_ = scan_->rid();
+
+        while (!scan_->is_end()) {
+            if (condCheck(fh_->get_record(rid_, context_).get())) break;
+            scan_->next();
+            rid_ = scan_->rid();
+        }
     }
 
-    /**
-     * @brief 从当前scan_指向的记录开始迭代扫描,直到扫描到第一个满足谓词条件的元组停止,并赋值给rid_
-     *
-     */
     void nextTuple() override {
-        
+        // 条件判断
+        for (scan_->next(); !scan_->is_end(); scan_->next()) {
+            rid_ = scan_->rid();
+            if (condCheck(fh_->get_record(rid_, context_).get())) break;
+        }
     }
 
-    /**
-     * @brief 返回下一个满足扫描条件的记录
-     *
-     * @return std::unique_ptr<RmRecord>
-     */
+    bool condCheck(const RmRecord *l_record) {
+        char *l_val_buf, *r_val_buf;
+        const RmRecord *r_record;
+
+        for (auto &condition : conds_) {  // 条件判断
+            CompOp op = condition.op;
+            int cmp;
+
+            // record和col确定数据位置
+            auto l_col = get_col(cols_, condition.lhs_col);  // 左列元数据
+            l_val_buf = l_record->data + l_col->offset;      // 确定左数据起点
+
+            if (condition.is_rhs_val) {  // 值
+                r_record = condition.rhs_val.raw.get();
+                r_val_buf = r_record->data;
+
+                cmp = cond_compare(l_val_buf, r_val_buf, condition.rhs_val.type, l_col->len);
+            } else {  // 列
+                auto r_col = get_col(cols_, condition.rhs_col);
+                r_val_buf = l_record->data + r_col->offset;
+
+                cmp = cond_compare(l_val_buf, r_val_buf, r_col->type, l_col->len);
+            }
+            if (!op_compare(op, cmp))  // 不满足条件
+                return false;
+        }
+        return true;
+    }
+
+    int cond_compare(const char *l_val_buf, const char *r_val_buf, ColType type, int col_len) const {
+        int cmp = ix_compare(l_val_buf, r_val_buf, type, col_len);
+        return cmp;
+    }
+
+    bool op_compare(CompOp op, int cmp) const {
+        if (op == OP_EQ) {
+            return cmp == 0;
+        } else if (op == OP_NE) {
+            return cmp != 0;
+        } else if (op == OP_LT) {
+            return cmp < 0;
+        } else if (op == OP_GT) {
+            return cmp > 0;
+        } else if (op == OP_LE) {
+            return cmp <= 0;
+        } else if (op == OP_GE) {
+            return cmp >= 0;
+        } else {
+            throw InternalError("Invalid CompOp");
+        }
+    }
+
+    bool is_end() const override { return scan_->is_end(); }
+
     std::unique_ptr<RmRecord> Next() override {
-        return nullptr;
+        return fh_->get_record(rid_, context_);
     }
 
     Rid &rid() override { return rid_; }
+    
+    size_t tupleLen() const override { return len_; };
+    std::string getType() override { return "SeqScanExecutor"; };
+    const std::vector<ColMeta> &cols() const override { return cols_; };
 };
