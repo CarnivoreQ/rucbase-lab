@@ -20,9 +20,15 @@ std::unique_ptr<RmRecord> RmFileHandle::get_record(const Rid& rid, Context* cont
     // Todo:
     // 1. 获取指定记录所在的page handle
     // 2. 初始化一个指向RmRecord的指针（赋值其内部的data和size）
-
+    context->lock_mgr_->lock_shared_on_record(context->txn_, rid, fd_);//lab4
     RmPageHandle page_handle = fetch_page_handle(rid.page_no); // 1
-    return std::unique_ptr<RmRecord>(new RmRecord({file_hdr_.record_size, page_handle.get_slot(rid.slot_no)})); // 2
+    std::unique_ptr<RmRecord> recordptr{new RmRecord(file_hdr_.record_size, page_handle.get_slot(rid.slot_no))}; // 2
+
+    //lab4:放入锁集
+    LockDataId lock_data_id =  LockDataId{fd_,rid,LockDataType::RECORD};
+    context->txn_->get_lock_set()->insert(lock_data_id);
+    
+    return recordptr;
 }
 
 /**
@@ -88,6 +94,9 @@ void RmFileHandle::delete_record(const Rid& rid, Context* context) {
     // 1. 获取指定记录所在的page handle
     // 2. 更新page_handle.page_hdr中的数据结构
     // 注意考虑删除一条记录后页面未满的情况，需要调用release_page_handle()
+    //lab4：加锁
+    context->lock_mgr_->lock_exclusive_on_record(context->txn_, rid, fd_);
+
     RmPageHandle page_handle = fetch_page_handle(rid.page_no); // 1
 
     if( page_handle.page_hdr->num_records == file_hdr_.num_records_per_page ) // 2: delete will make full->not full
@@ -95,7 +104,11 @@ void RmFileHandle::delete_record(const Rid& rid, Context* context) {
     page_handle.page_hdr->num_records--;
     Bitmap::reset( page_handle.bitmap, rid.slot_no );
 
-    buffer_pool_manager_->unpin_page( page_handle.page->get_page_id(), true );
+    // 放入锁集
+    LockDataId lock_data_id =  LockDataId{fd_,rid,LockDataType::RECORD};
+    context->txn_->get_lock_set()->insert(lock_data_id);
+
+    //buffer_pool_manager_->unpin_page( page_handle.page->get_page_id(), true );
 }
 
 
@@ -109,6 +122,9 @@ void RmFileHandle::update_record(const Rid& rid, char* buf, Context* context) {
     // Todo:
     // 1. 获取指定记录所在的page handle
     // 2. 更新记录
+    // lab4 加锁
+    context->lock_mgr_->lock_exclusive_on_record(context->txn_, rid, fd_);
+
     RmPageHandle page_handle = fetch_page_handle(rid.page_no); // 1
 
     char *slot = page_handle.get_slot( rid.slot_no ); // 2
@@ -116,6 +132,9 @@ void RmFileHandle::update_record(const Rid& rid, char* buf, Context* context) {
 
     buffer_pool_manager_->unpin_page( page_handle.page->get_page_id(), true );
 
+    // 放入锁集
+    LockDataId lock_data_id =  LockDataId{fd_,rid,LockDataType::RECORD};
+    context->txn_->get_lock_set()->insert(lock_data_id);
 }
 
 /**
